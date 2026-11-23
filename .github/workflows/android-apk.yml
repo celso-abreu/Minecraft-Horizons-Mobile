@@ -130,7 +130,21 @@ jobs:
           status=${PIPESTATUS[0]}
 
           if [[ "$status" -ne 0 ]]; then
-            snippet="$(python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]; print(s.replace("%","%25").replace(chr(13),"%0D").replace(chr(10),"%0A"))' "$LOG")"
+            snippet="$(python3 - "$LOG" <<'PY'
+          import pathlib, sys
+          lines = pathlib.Path(sys.argv[1]).read_text(errors="replace").splitlines()
+          failure = next((i for i, line in enumerate(lines) if line.startswith("FAILURE:")), None)
+          if failure is None:
+              selected = lines[-120:]
+          else:
+              start = max(0, failure - 80)
+              limit = min(len(lines), failure + 80)
+              end = next((i for i in range(failure + 1, limit) if lines[i].startswith("* Try:")), limit)
+              selected = lines[start:end]
+          text = chr(10).join(selected)[-12000:]
+          sys.stdout.write(text.replace("%", "%25").replace(chr(13), "%0D").replace(chr(10), "%0A"))
+          PY
+            )"
             echo "::error title=Gradle build log tail::${snippet}"
           fi
           exit "$status"
