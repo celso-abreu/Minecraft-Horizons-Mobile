@@ -146,9 +146,9 @@ tasks.register("buildRustAndroid", Exec) {
     environment("CARGO_TARGET_DIR", new File(nativeHostRoot, "target").absolutePath)
     environment("CARGO_TARGET_${rustTripleEnv}_LINKER", rustLinker.absolutePath)
     // Several transitive crates compile small native sources (for example mimalloc and TLS).
-    environment("CC_${rustTripleEnv}", rustCCompiler.absolutePath)
-    environment("CXX_${rustTripleEnv}", rustCxxCompiler.absolutePath)
-    environment("AR_${rustTripleEnv}", rustArchiver.absolutePath)
+    environment("CC_${rustCcTargetEnv}", rustCCompiler.absolutePath)
+    environment("CXX_${rustCcTargetEnv}", rustCxxCompiler.absolutePath)
+    environment("AR_${rustCcTargetEnv}", rustArchiver.absolutePath)
     environment("ANDROID_NDK_HOME", androidNdk.absolutePath)
     environment("ANDROID_NDK_ROOT", androidNdk.absolutePath)
     commandLine(cargoExecutable,
