@@ -4,6 +4,7 @@ plugins {
 
 def rustTarget = "aarch64-linux-android"
 def rustTripleEnv = rustTarget.toUpperCase(Locale.ROOT).replace('-', '_')
+def rustCcTargetEnv = rustTarget.replace('-', '_')
 def androidApi = 26
 def androidRoot = projectDir.parentFile
 def upstreamRoot = new File(androidRoot, "upstream")
