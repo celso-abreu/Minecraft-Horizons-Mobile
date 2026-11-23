@@ -1,0 +1,32 @@
+[workspace]
+
+# Cargo takes patch tables from the root workspace, not from path dependencies'
+# workspaces. Mirror the fork's pinned renderer and allocator fixes explicitly.
+[patch.crates-io]
+wgpu-hal = { path = "../upstream/third_party/wgpu-hal" }
+naga = { path = "../upstream/third_party/naga" }
+libmimalloc-sys = { path = "../upstream/third_party/libmimalloc-sys" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[package]
+name = "horizon-android-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "LGPL-3.0-or-later"
+publish = false
+
+[lib]
+name = "horizon_android"
+crate-type = ["cdylib"]
+
+[dependencies]
+horizon-client = { path = "../upstream/crates/horizon-client", default-features = false }
+horizon-game = { path = "../upstream/crates/horizon-game", default-features = false, features = ["horizon-extras"] }
+horizon-official = { path = "../upstream/crates/horizon-official" }
+android_logger = "0.15"
+log = "0.4"
+winit = { version = "0.30.13", features = ["android-native-activity"] }

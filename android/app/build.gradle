@@ -1,0 +1,190 @@
+plugins {
+    id "com.android.application"
+}
+
+def rustTarget = "aarch64-linux-android"
+def rustTripleEnv = rustTarget.toUpperCase(Locale.ROOT).replace('-', '_')
+def androidApi = 26
+def androidRoot = projectDir.parentFile
+def upstreamRoot = new File(androidRoot, "upstream")
+def androidUpstreamPatch = new File(androidRoot, "patches/horizon-android.patch.gz")
+def decodedAndroidPatch = new File(layout.buildDirectory.get().asFile, "android-upstream/horizon-android.patch")
+def nativeHostRoot = new File(androidRoot, "native-host")
+def nativeHostManifest = new File(nativeHostRoot, "Cargo.toml")
+def rustLibrary = new File(nativeHostRoot, "target/${rustTarget}/release/libhorizon_android.so")
+def generatedJniLibs = layout.buildDirectory.dir("generated/jniLibs")
+def nativeHostOs = System.getProperty("os.name").toLowerCase(Locale.ROOT)
+def ndkHostTag = nativeHostOs.contains("win") ? "windows-x86_64" :
+        nativeHostOs.contains("mac") ? "darwin-x86_64" : "linux-x86_64"
+def rustupExecutable = System.getenv("RUSTUP")
+if (rustupExecutable == null || rustupExecutable.isEmpty()) {
+    rustupExecutable = "rustup"
+}
+def cargoExecutable = System.getenv("CARGO")
+if (cargoExecutable == null || cargoExecutable.isEmpty()) {
+    cargoExecutable = "cargo"
+}
+
+android {
+    namespace "org.horizon.mobile"
+    compileSdk 35
+    ndkVersion "27.2.12479018"
+
+    defaultConfig {
+        applicationId "org.horizon.mobile"
+        minSdk 26
+        targetSdk 35
+        versionCode 1
+        versionName "0.1.0"
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    buildTypes {
+        debug {
+            minifyEnabled false
+        }
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17;
+        targetCompatibility = JavaVersion.VERSION_17;
+    }
+
+    sourceSets {
+        main {
+            jniLibs.srcDir(generatedJniLibs)
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging true
+        }
+    }
+}
+
+// Resolve this only after Android's DSL has selected the pinned NDK version.
+def androidNdk = android.ndkDirectory
+def ndkBin = new File(androidNdk, "toolchains/llvm/prebuilt/${ndkHostTag}/bin")
+def hostToolSuffix = nativeHostOs.contains("win") ? ".cmd" : ""
+def linkerName = "aarch64-linux-android${androidApi}-clang${hostToolSuffix}"
+def cxxCompilerName = "aarch64-linux-android${androidApi}-clang++${hostToolSuffix}"
+def archiverName = nativeHostOs.contains("win") ? "llvm-ar.exe" : "llvm-ar"
+def rustLinker = new File(ndkBin, linkerName)
+def rustCCompiler = rustLinker
+def rustCxxCompiler = new File(ndkBin, cxxCompilerName)
+def rustArchiver = new File(ndkBin, archiverName)
+
+tasks.register("applyAndroidUpstreamPatch") {
+    group = "build"
+    description = "Applies the tracked Android port patch to the pinned Horizon submodule."
+    doLast {
+        if (!upstreamRoot.isDirectory() || !androidUpstreamPatch.isFile()) {
+            throw new GradleException("Initialize android/upstream and keep android/patches/horizon-android.patch.gz available.");
+        }
+        decodedAndroidPatch.parentFile.mkdirs()
+        new java.util.zip.GZIPInputStream(new FileInputStream(androidUpstreamPatch)).withCloseable { gzip ->
+            decodedAndroidPatch.withOutputStream { output ->
+                gzip.transferTo(output)
+            }
+        }
+        def forwardOutput = new ByteArrayOutputStream()
+        def forward = project.exec {
+            workingDir(upstreamRoot)
+            commandLine("git", "apply", "--check", decodedAndroidPatch.absolutePath)
+            standardOutput = forwardOutput
+            errorOutput = forwardOutput
+            ignoreExitValue = true
+        }
+        if (forward.exitValue == 0) {
+            def applyOutput = new ByteArrayOutputStream()
+            def applied = project.exec {
+                workingDir(upstreamRoot)
+                commandLine("git", "apply", decodedAndroidPatch.absolutePath)
+                standardOutput = applyOutput
+                errorOutput = applyOutput
+                ignoreExitValue = true
+            }
+            if (applied.exitValue != 0) {
+                throw new GradleException("Could not apply the Horizon Android patch: ${applyOutput.toString('UTF-8')}");
+            }
+        } else {
+            def reverseOutput = new ByteArrayOutputStream()
+            def reverse = project.exec {
+                workingDir(upstreamRoot)
+                commandLine("git", "apply", "--reverse", "--check", decodedAndroidPatch.absolutePath)
+                standardOutput = reverseOutput
+                errorOutput = reverseOutput
+                ignoreExitValue = true
+            }
+            if (reverse.exitValue != 0) {
+                throw new GradleException("Horizon upstream is neither clean at the pinned base nor fully patched: ${forwardOutput.toString('UTF-8')}${reverseOutput.toString('UTF-8')}");
+            }
+            logger.lifecycle("Horizon Android patch is already applied.");
+        }
+    }
+}
+
+tasks.register("ensureRustAndroidTarget", Exec) {
+    group = "build"
+    description = "Installs the Rust standard library for Android arm64."
+    workingDir upstreamRoot
+    commandLine(rustupExecutable, "target", "add", rustTarget);
+}
+
+tasks.register("buildRustAndroid", Exec) {
+    group = "build"
+    description = "Builds the Horizon NativeActivity library for Android arm64."
+    dependsOn("ensureRustAndroidTarget", "applyAndroidUpstreamPatch")
+    workingDir upstreamRoot
+    environment("CARGO_TARGET_DIR", new File(nativeHostRoot, "target").absolutePath)
+    environment("CARGO_TARGET_${rustTripleEnv}_LINKER", rustLinker.absolutePath)
+    // Several transitive crates compile small native sources (for example mimalloc and TLS).
+    environment("CC_${rustTripleEnv}", rustCCompiler.absolutePath)
+    environment("CXX_${rustTripleEnv}", rustCxxCompiler.absolutePath)
+    environment("AR_${rustTripleEnv}", rustArchiver.absolutePath)
+    environment("ANDROID_NDK_HOME", androidNdk.absolutePath)
+    environment("ANDROID_NDK_ROOT", androidNdk.absolutePath)
+    commandLine(cargoExecutable,
+            "build",
+            "--manifest-path", nativeHostManifest.absolutePath,
+            "--target", rustTarget,
+            "--release");
+    doFirst {
+        if (!upstreamRoot.isDirectory()) {
+            throw new GradleException("Initialize the android/upstream git submodule first.");
+        }
+        if (!nativeHostManifest.isFile()) {
+            throw new GradleException("Missing Android Rust host manifest: ${nativeHostManifest}");
+        }
+        for (tool in [rustLinker, rustCxxCompiler, rustArchiver]) {
+            if (!tool.isFile()) {
+                throw new GradleException("Android NDK tool not found: ${tool}. Install NDK 27.2.12479018 in the Android SDK.");
+            }
+        }
+    }
+    // Cargo performs its own fine-grained incremental checks; Gradle should always invoke it.
+    outputs.upToDateWhen { false }
+}
+
+tasks.register("stageRustAndroid", Copy) {
+    group = "build"
+    description = "Stages the Rust shared library into the Android APK."
+    dependsOn("buildRustAndroid")
+    from(rustLibrary)
+    into(generatedJniLibs.map { it.dir("arm64-v8a") })
+    doFirst {
+        if (!rustLibrary.isFile()) {
+            throw new GradleException("Rust build did not produce ${rustLibrary}");
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn("stageRustAndroid")
+}
