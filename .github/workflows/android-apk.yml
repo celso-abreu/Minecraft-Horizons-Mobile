@@ -36,13 +36,70 @@ jobs:
           java-version: '17'
 
       - name: Set up Android SDK, Build Tools, and NDK
+        id: android_sdk_setup
         uses: android-actions/setup-android@v3
+        continue-on-error: true
         with:
           packages: |
             platform-tools
             platforms;android-35
             build-tools;35.0.0
             ndk;27.2.12479018
+
+      - name: Verify Android SDK packages and publish diagnostics
+        id: android_sdk_diagnostics
+        shell: bash
+        run: |
+          set +e
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="${SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [[ ! -x "$SDKMANAGER" ]]; then
+            SDKMANAGER="$(command -v sdkmanager || true)"
+          fi
+          LOG="$RUNNER_TEMP/android-sdk-manager.log"
+          : > "$LOG"
+          status=0
+
+          if [[ -z "$SDKMANAGER" || ! -x "$SDKMANAGER" ]]; then
+            echo "Could not locate sdkmanager. ANDROID_HOME=$ANDROID_HOME ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" | tee -a "$LOG"
+            status=127
+          else
+            {
+              echo "sdkmanager path: $SDKMANAGER"
+              echo "Android SDK root: $SDK_ROOT"
+              echo "Java version:"
+              java -version
+            } >> "$LOG" 2>&1
+
+            yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses 2>&1 | tee -a "$LOG"
+            license_status=${PIPESTATUS[1]}
+            if [[ "$license_status" -ne 0 ]]; then
+              status="$license_status"
+            else
+              "$SDKMANAGER" --sdk_root="$SDK_ROOT" --verbose \
+                "platform-tools" \
+                "platforms;android-35" \
+                "build-tools;35.0.0" \
+                "ndk;27.2.12479018" 2>&1 | tee -a "$LOG"
+              status=${PIPESTATUS[0]}
+            fi
+          fi
+
+          {
+            echo "## Android SDK package setup"
+            echo "- setup-android action outcome: `${{ steps.android_sdk_setup.outcome }}`"
+            echo "- sdkmanager exit status: `$status`"
+            echo
+            echo '```text'
+            tail -n 160 "$LOG"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$status" -ne 0 ]]; then
+            snippet="$(tail -c 8000 "$LOG" | tr '\r\n' '  ' | sed 's/%/%25/g')"
+            echo "::error title=Android SDK install diagnostic::${snippet}"
+            exit "$status"
+          fi
 
       - name: Set up Rust 1.95 and Android target
         uses: dtolnay/rust-toolchain@stable
