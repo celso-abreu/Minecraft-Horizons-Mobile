@@ -101,10 +101,10 @@ jobs:
             exit "$status"
           fi
 
-      - name: Set up Rust 1.95 and Android target
+      - name: Set up Rust 1.97 and Android target
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.95.0
+          toolchain: 1.97.0
           targets: aarch64-linux-android
 
       - name: Cache Rust artifacts

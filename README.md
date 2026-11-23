@@ -12,7 +12,7 @@ Required on the build machine:
 - JDK 17.
 - Android SDK Platform 35, Build Tools, and NDK `27.2.12479018`.
 - Gradle 8.9 or newer compatible with Android Gradle Plugin 8.7.3.
-- Rust 1.95 or newer installed with `rustup`; the Gradle task installs the
+- Rust 1.97 or newer installed with `rustup`; the Gradle task installs the
   `aarch64-linux-android` Rust target.
 
 From the repository root:
