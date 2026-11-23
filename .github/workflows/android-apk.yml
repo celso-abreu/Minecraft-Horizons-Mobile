@@ -120,8 +120,31 @@ jobs:
           gradle-version: '8.9'
 
       - name: Build debug APK
+        id: android_build
+        shell: bash
         working-directory: android
-        run: gradle --no-daemon --stacktrace :app:assembleDebug
+        run: |
+          set +e
+          LOG="$RUNNER_TEMP/gradle-build.log"
+          gradle --no-daemon --stacktrace :app:assembleDebug 2>&1 | tee "$LOG"
+          status=${PIPESTATUS[0]}
+
+          if [[ "$status" -ne 0 ]]; then
+            snippet="$(python3 -c 'import pathlib,sys; s=pathlib.Path(sys.argv[1]).read_text(errors="replace")[-6000:]; print(s.replace("%","%25").replace(chr(13),"%0D").replace(chr(10),"%0A"))' "$LOG")"
+            echo "::error title=Gradle build log tail::${snippet}"
+          fi
+          exit "$status"
+
+      - name: Upload build diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-build-diagnostics-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/android-sdk-manager.log
+            ${{ runner.temp }}/gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
